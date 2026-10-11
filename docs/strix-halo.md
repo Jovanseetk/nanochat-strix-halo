@@ -6,12 +6,13 @@ The NPU is not used. See [PyTorch's HIP semantics](https://docs.pytorch.org/docs
 
 ## Install and check the GPU
 
-Install the AMD driver/ROCm prerequisites for your Linux distribution first.
-The pinned baseline here is **ROCm 7.2, PyTorch 2.9.1, Python 3.12, Linux x86_64**.
-AMD lists the 395 and Ubuntu 24.04.3 in its [ROCm 7.2 Ryzen support matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2/docs/compatibility/compatibilityryz/native_linux/native_linux_compatibility.html).
-Its [installation guide](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2/docs/install/installryz/native_linux/install-pytorch.html)
-requires the 6.14-1018 OEM kernel or newer and supplies the exact torch/Triton wheels pinned in `requirements-rocm.txt`.
-This is a versioned baseline matching nanochat's existing torch pin, not a claim that ROCm 7.2 is the latest release.
+Install the AMD driver prerequisites for your Linux distribution first.
+This setup targets **ROCm 10.1.0, PyTorch 2.14.0, Python 3.12, Linux x86_64**.
+It follows AMD's [PyTorch installation guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
+using `torch[device-gfx1151]==2.14.0+rocm10.1.0` from AMD's package index.
+The device extra installs the matching ROCm runtime and GPU libraries into
+the virtual environment. A compatible host kernel driver is still required;
+see AMD's [ROCm 10.1 compatibility matrix](https://rocm.docs.amd.com/en/docs-10.1.0/compatibility/compatibility-matrix.html).
 
 With [uv installed](https://docs.astral.sh/uv/getting-started/installation/), run from this checkout:
 
@@ -22,9 +23,14 @@ source .venv/bin/activate
 
 The setup script chooses Python 3.12 explicitly (the repository's generic
 `.python-version` is 3.10). It installs the existing locked base dependencies,
-skips their CPU torch wheel, and installs hash-checked AMD torch/Triton wheels.
-The separate wheel file keeps AMD packages out of the ordinary CPU/NVIDIA
-dependency resolution. The setup then runs a tiny
+skips their CPU torch wheel, and installs AMD's torch build with its runtime
+dependencies. This ROCm overlay uses PyTorch 2.14 instead of the generic
+project's 2.9.1 pin and can update dependencies required by AMD's build;
+`uv pip check` checks the resulting environment. `requirements-rocm.txt` pins
+torch and its device extra; transitive dependencies are resolved from AMD's
+index rather than locked by `uv.lock`. The separate requirements file keeps
+AMD packages out of the ordinary CPU/NVIDIA dependency resolution.
+The setup then runs a tiny
 offline GPU check: training forward/backward, Muon and AdamW updates, grouped
 query attention, and KV-cache prefill/chunk/decode. It fails if an AMD GPU is not
 available. No training data or model download is needed for this check.
@@ -37,8 +43,8 @@ bash runs/setup_strix_halo.sh --group dev
 python -m pytest
 ```
 
-Use this setup only on Linux x86_64 with Python 3.12; the pinned wheel files are
-specific to that platform. Rerun the setup script to refresh the environment.
+Use this setup only on Linux x86_64 with Python 3.12. Rerun the setup script
+to refresh the environment, including replacing an older ROCm 7.2 torch build.
 A plain `uv sync` or `uv run` can replace the AMD torch build; use the activated environment's
 `python`, or `uv run --no-sync`, after setup.
 
@@ -92,9 +98,8 @@ NVIDIA H100s and should not be used on this machine.
 
 ## Runtime choices and troubleshooting
 
-- ROCm selects BF16 when PyTorch reports support, otherwise FP32. AMD's 7.2
-  Ryzen matrix officially validates FP16 only; BF16 on this port must be checked
-  with the smoke test on your system. You can use `NANOCHAT_DTYPE=float32` for a
+- ROCm selects BF16 when PyTorch reports support, otherwise FP32. Check the
+  selected dtype with the smoke test on your system. You can use `NANOCHAT_DTYPE=float32` for a
   conservative fallback or `NANOCHAT_DTYPE=float16` for pretraining/SFT, which
   use GradScaler. RL does not currently support FP16 loss scaling.
 - Attention uses PyTorch SDPA. NVIDIA FA3 kernels are never loaded on ROCm.
@@ -104,11 +109,21 @@ NVIDIA H100s and should not be used on this machine.
   --device-type cuda --require-rocm`, then apply that setting to training.
   `NANOCHAT_COMPILE=0` disables compilation everywhere. Set it before launching
   Python, since optimizer decorators are evaluated during import.
-- If desired, test AMD's opt-in AOTriton attention kernels by setting
-  `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` before Python starts, as described
-  in AMD's installation guide. They are not required by the default setup.
 - `--fp8` is rejected on ROCm: this repository's FP8 recipe targets NVIDIA
   Hopper or newer. Do not copy the H100 speedrun's FP8 flag.
+- `ImportError: libroctx64.so.4` during `import torch` with the old setup means
+  the ROCm 7.2 wheel cannot find its legacy ROCTracer dependency. On a ROCm
+  10.1 system, update this checkout and rerun setup to replace that wheel:
+
+  ```bash
+  git pull --ff-only
+  bash runs/setup_strix_halo.sh
+  ```
+
+  Installing the device extra **with dependencies** is required. Do not create
+  a compatibility symlink from a differently versioned profiling library.
+  The printed HIP version can differ from the ROCm SDK version: ROCm 10.1
+  includes HIP 7.16, per AMD's [release notes](https://rocm.docs.amd.com/en/docs-10.1.0/about/release-notes.html).
 - If `torch.cuda.is_available()` is false, confirm `torch.version.hip` is set,
   check `python -m torch.utils.collect_env`, and verify access to `/dev/kfd`
   and `/dev/dri/render*` using your distribution's AMD driver instructions.
