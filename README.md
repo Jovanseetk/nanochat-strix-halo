@@ -37,6 +37,11 @@ uv sync --extra cpu    # (or) Use for CPU-only / MPS
 source .venv/bin/activate
 ```
 
+For **AMD Strix Halo (Ryzen AI Max+ 395 / Radeon 8060S) on native Linux**, use
+`bash runs/setup_strix_halo.sh`, then `bash runs/strix_halo.sh` for a small
+single-GPU training run. See the [Strix Halo guide](docs/strix-halo.md) for
+driver prerequisites, the ROCm smoke test, and training/SFT options.
+
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
 ```bash
@@ -119,6 +124,7 @@ nanochat does not use `torch.amp.autocast`. Instead, precision is managed explic
 |----------|--------------|-----|
 | CUDA SM 80+ (A100, H100, ...) | `bfloat16` | Native bf16 tensor cores |
 | CUDA SM < 80 (V100, T4, ...) | `float32` | No bf16; fp16 available via `NANOCHAT_DTYPE=float16` (uses GradScaler) |
+| AMD ROCm (including Strix Halo) | `bfloat16` when supported, otherwise `float32` | Uses PyTorch's BF16 support query; see the [Strix Halo validation notes](docs/strix-halo.md) |
 | CPU / MPS | `float32` | Safe default. On recent macOS, MPS also runs `NANOCHAT_DTYPE=bfloat16` fine (~25% less memory, similar speed) |
 
 You can override the default with the `NANOCHAT_DTYPE` environment variable:

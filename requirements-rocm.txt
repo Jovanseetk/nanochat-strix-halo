@@ -1,0 +1,7 @@
+# AMD's ROCm 7.2 Ryzen wheels: Linux x86_64, CPython 3.12.
+# See docs/strix-halo.md. Install after the locked base dependencies using
+# runs/setup_strix_halo.sh; --no-deps preserves the project's dependency lock.
+torch @ https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torch-2.9.1%2Brocm7.2.0.lw.git7e1940d4-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:199ba10a8b8b5a7eef64985bf87a41f0f4b28d49b1b861aa2768f6c5314c9b86
+triton @ https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/triton-3.5.1%2Brocm7.2.0.gita272dfa8-cp312-cp312-linux_x86_64.whl \
+    --hash=sha256:73d435248c3a207fec6f5a7a2aba631c7079a61230ce4aaa8cde02e800024b47

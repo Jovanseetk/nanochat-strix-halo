@@ -19,6 +19,12 @@ def _detect_compute_dtype():
     if env is not None:
         return _DTYPE_MAP[env], f"set via NANOCHAT_DTYPE={env}"
     if torch.cuda.is_available():
+        # ROCm exposes AMD GPUs through torch.cuda, but NVIDIA SM versions do
+        # not describe their capabilities (e.g. Strix Halo is gfx1151).
+        if torch.version.hip is not None:
+            if torch.cuda.is_bf16_supported():
+                return torch.bfloat16, "auto-detected: ROCm (bf16 supported)"
+            return torch.float32, "auto-detected: ROCm (bf16 not supported, using fp32)"
         # bf16 requires SM 80+ (Ampere: A100, A10, etc.)
         # Older GPUs like V100 (SM 70) and T4 (SM 75) only have fp16 tensor cores
         capability = torch.cuda.get_device_capability()
@@ -30,6 +36,40 @@ def _detect_compute_dtype():
     # Note: MPS on recent macOS also handles bf16 fine, opt in via NANOCHAT_DTYPE=bfloat16
     return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
 COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
+
+
+def compile_enabled():
+    """Set NANOCHAT_COMPILE=0/1 before launch to control model AND optimizer compilation.
+
+    Default to eager on Strix Halo: its compiler support depends on the ROCm
+    distribution. Other devices retain the existing compiled path.
+    """
+    override = os.environ.get("NANOCHAT_COMPILE")
+    if override is not None:
+        if override not in ("0", "1"):
+            raise ValueError("NANOCHAT_COMPILE must be 0 (eager) or 1 (compiled)")
+        return override == "1"
+    if torch.version.hip is not None and torch.cuda.is_available():
+        arch = torch.cuda.get_device_properties(None).gcnArchName
+        return arch.split(":")[0] != "gfx1151"
+    return True
+
+
+def maybe_compile(fn=None, **kwargs):
+    """torch.compile-compatible decorator/call with an explicit eager path."""
+    def wrap(target):
+        return torch.compile(target, **kwargs) if compile_enabled() else target
+    return wrap if fn is None else wrap(fn)
+
+
+def supports_fp8():
+    """Whether this backend supports nanochat's NVIDIA FP8 training recipe."""
+    return (
+        torch.version.hip is None
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability()[0] >= 9
+    )
+
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -161,7 +201,7 @@ def get_dist_info():
         return False, 0, 0, 1
 
 def autodetect_device_type():
-    # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
+    # PyTorch uses the CUDA API/device name for ROCm too.
     if torch.cuda.is_available():
         device_type = "cuda"
     elif torch.backends.mps.is_available():
@@ -176,7 +216,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
     if device_type == "cuda":
-        assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
+        assert torch.cuda.is_available(), "No CUDA/ROCm GPU available. Check the PyTorch build, GPU driver, and device permissions."
     if device_type == "mps":
         assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
@@ -190,7 +230,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     # torch.use_deterministic_algorithms(True)
 
     # Precision
-    if device_type == "cuda":
+    if device_type == "cuda" and torch.version.hip is None:
         torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls, see https://docs.pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
 
     # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA

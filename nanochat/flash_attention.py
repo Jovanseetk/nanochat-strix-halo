@@ -2,7 +2,7 @@
 Unified Flash Attention interface with automatic FA3/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on incompatible CUDA GPUs, MPS, and CPU.
+to PyTorch SDPA on ROCm, incompatible CUDA GPUs, MPS, and CPU.
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
@@ -22,7 +22,7 @@ import torch.nn.functional as F
 # =============================================================================
 def _load_flash_attention_3():
     """Try to load Flash Attention 3."""
-    if not torch.cuda.is_available():
+    if torch.version.hip is not None or not torch.cuda.is_available():
         return None
     try:
         major, _ = torch.cuda.get_device_capability()
